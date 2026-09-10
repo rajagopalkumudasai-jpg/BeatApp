@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f172a" />
+  <title>Money & Beat Tracker</title>
+  <link rel="manifest" href="manifest.json">
+  <style>
+    :root{
+      --bg:#0b1220;--card:#111827;--muted:#94a3b8;--text:#f8fafc;
+      --accent:#38bdf8;--border:#233047;--good:#22c55e;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+      background:linear-gradient(180deg,#07101d,#0b1220);color:var(--text);
+    }
+    .wrap{max-width:1100px;margin:auto;padding:20px}
+    h1{font-size:clamp(26px,4vw,42px);margin:0 0 8px}
+    .sub{color:var(--muted);margin-bottom:20px}
+    .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px}
+    .card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:16px}
+    .label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+    .value{font-size:24px;font-weight:700;margin-top:6px}
+    .settings{display:flex;gap:12px;flex-wrap:wrap;align-items:end;margin-bottom:18px}
+    .field{flex:1;min-width:180px}
+    label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
+    input{
+      width:100%;padding:12px 14px;border-radius:12px;border:1px solid var(--border);
+      background:#0f172a;color:var(--text);font-size:16px;
+    }
+    button{
+      padding:12px 16px;border:0;border-radius:12px;background:var(--accent);
+      color:#001018;font-weight:700;cursor:pointer;
+    }
+    .table-wrap{overflow:auto;border-radius:16px;border:1px solid var(--border);background:var(--card)}
+    table{width:100%;border-collapse:collapse;min-width:860px}
+    th,td{padding:12px 10px;border-bottom:1px solid var(--border);text-align:center}
+    th{position:sticky;top:0;background:#0f172a;color:#cbd5e1;font-size:12px}
+    td input{padding:8px 10px;border-radius:9px;font-size:14px}
+    td.money{font-variant-numeric:tabular-nums}
+    .reset{color:var(--good);font-weight:700}
+    .actions{margin-top:14px;display:flex;gap:10px;flex-wrap:wrap}
+    .secondary{background:#1e293b;color:#e2e8f0;border:1px solid var(--border)}
+    .danger{background:#7f1d1d;color:white}
+    @media(max-width:760px){
+      .grid{grid-template-columns:repeat(2,1fr)}
+      .wrap{padding:14px}
+    }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Money & Beat Tracker</h1>
+  <div class="sub">30 monthly entries • 10th of every month • local device storage</div>
+
+  <div class="grid">
+    <div class="card"><div class="label">Total Money Paid</div><div id="totalPaid" class="value">₹0</div></div>
+    <div class="card"><div class="label">Total Beat Amount</div><div id="totalBeat" class="value">₹0</div></div>
+    <div class="card"><div class="label">Latest Cumulative Beat</div><div id="latestCum" class="value">₹0</div></div>
+    <div class="card"><div class="label">Base Amount</div><div id="baseDisplay" class="value">₹10,000</div></div>
+  </div>
+
+  <div class="card settings">
+    <div class="field">
+      <label>Fixed Base Amount</label>
+      <input id="baseAmount" type="number" min="0" step="1" value="10000">
+    </div>
+    <div class="field">
+      <label>Default Money Paid</label>
+      <input id="defaultPaid" type="number" min="0" step="1" value="30000">
+    </div>
+    <button id="applySettings">Apply Settings</button>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Sl. No.</th>
+          <th>Date</th>
+          <th>Money Paid</th>
+          <th>Beat Amount</th>
+          <th>Net Amount</th>
+          <th>Cumulative Beat</th>
+        </tr>
+      </thead>
+      <tbody id="ledger"></tbody>
+    </table>
+  </div>
+
+  <div class="actions">
+    <button class="secondary" id="exportCsv">Export CSV</button>
+    <button class="secondary" id="saveNow">Save Now</button>
+    <button class="danger" id="resetAll">Reset All Data</button>
+  </div>
+</div>
+
+<script>
+const STORAGE_KEY = "moneyBeatTracker_v1";
+
+function currency(n){
+  const v = Number(n||0);
+  return new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:0}).format(v);
+}
+function monthDate(index){
+  const d = new Date(2026, 1 + index, 10); // Feb 10, 2026 onwards
+  return d.toISOString().slice(0,10);
+}
+
+function defaultState(){
+  return {
+    baseAmount:10000,
+    defaultPaid:30000,
+    rows:Array.from({length:30},(_,i)=>({
+      sl:i+1,
+      date:monthDate(i),
+      moneyPaid:30000,
+      beatAmount:""
+    }))
+  };
+}
+
+let state = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null") || defaultState();
+
+function save(){ localStorage.setItem(STORAGE_KEY,JSON.stringify(state)); }
+
+function recalc(){
+  let prevCum = 0;
+  let prevReached = false;
+  state.rows.forEach((r,i)=>{
+    const beat = Number(r.beatAmount || 0);
+    r.netAmount = r.beatAmount === "" ? "" : state.baseAmount - beat;
+    if(r.beatAmount === ""){
+      r.cumulativeBeat = "";
+      prevCum = 0;
+      prevReached = false;
+      return;
+    }
+    if(i===0 || prevReached){
+      r.cumulativeBeat = beat;
+    }else{
+      r.cumulativeBeat = prevCum + beat;
+    }
+    prevCum = Number(r.cumulativeBeat || 0);
+    prevReached = prevCum >= state.baseAmount;
+  });
+}
+
+function render(){
+  recalc();
+  document.getElementById("baseAmount").value = state.baseAmount;
+  document.getElementById("defaultPaid").value = state.defaultPaid;
+  document.getElementById("baseDisplay").textContent = currency(state.baseAmount);
+
+  const tbody = document.getElementById("ledger");
+  tbody.innerHTML = "";
+
+  state.rows.forEach((r,i)=>{
+    const tr = document.createElement("tr");
+    const resetMark = (i>0 && state.rows[i-1].cumulativeBeat !== "" && Number(state.rows[i-1].cumulativeBeat)>=state.baseAmount);
+    tr.innerHTML = `
+      <td>${r.sl}</td>
+      <td><input type="date" data-k="date" data-i="${i}" value="${r.date}"></td>
+      <td><input type="number" data-k="moneyPaid" data-i="${i}" value="${r.moneyPaid}"></td>
+      <td><input type="number" data-k="beatAmount" data-i="${i}" value="${r.beatAmount}"></td>
+      <td class="money">${r.netAmount===""?"—":currency(r.netAmount)}</td>
+      <td class="money ${resetMark?"reset":""}">${r.cumulativeBeat===""?"—":currency(r.cumulativeBeat)}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  document.querySelectorAll("tbody input").forEach(inp=>{
+    inp.addEventListener("input",e=>{
+      const i = Number(e.target.dataset.i);
+      const k = e.target.dataset.k;
+      state.rows[i][k] = e.target.value;
+      if(k==="moneyPaid" || k==="beatAmount"){
+        state.rows[i][k] = e.target.value === "" ? "" : Number(e.target.value);
+      }
+      save();
+      render();
+    });
+  });
+
+  const totalPaid = state.rows.reduce((s,r)=>s+Number(r.moneyPaid||0),0);
+  const totalBeat = state.rows.reduce((s,r)=>s+Number(r.beatAmount||0),0);
+  const latest = [...state.rows].reverse().find(r=>r.cumulativeBeat!=="" && r.cumulativeBeat!=null);
+
+  document.getElementById("totalPaid").textContent = currency(totalPaid);
+  document.getElementById("totalBeat").textContent = currency(totalBeat);
+  document.getElementById("latestCum").textContent = currency(latest?latest.cumulativeBeat:0);
+  save();
+}
+
+document.getElementById("applySettings").onclick = ()=>{
+  const oldDefault = state.defaultPaid;
+  state.baseAmount = Number(document.getElementById("baseAmount").value||0);
+  state.defaultPaid = Number(document.getElementById("defaultPaid").value||0);
+  state.rows.forEach(r=>{ if(Number(r.moneyPaid)===Number(oldDefault)) r.moneyPaid = state.defaultPaid; });
+  save(); render();
+};
+
+document.getElementById("saveNow").onclick = ()=>{ save(); alert("Saved on this device."); };
+
+document.getElementById("resetAll").onclick = ()=>{
+  if(confirm("Reset all entries and settings?")){
+    state = defaultState(); save(); render();
+  }
+};
+
+document.getElementById("exportCsv").onclick = ()=>{
+  recalc();
+  const rows = [["Sl No","Date","Money Paid","Beat Amount","Net Amount","Cumulative Beat"]];
+  state.rows.forEach(r=>rows.push([r.sl,r.date,r.moneyPaid,r.beatAmount,r.netAmount,r.cumulativeBeat]));
+  const csv = rows.map(row=>row.map(v=>`"${String(v??"").replaceAll('"','""')}"`).join(",")).join("\n");
+  const blob = new Blob([csv],{type:"text/csv"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "money-beat-tracker.csv";
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+
+render();
+
+if("serviceWorker" in navigator){
+  navigator.serviceWorker.register("sw.js").catch(()=>{});
+}
+</script>
+</body>
+</html>
